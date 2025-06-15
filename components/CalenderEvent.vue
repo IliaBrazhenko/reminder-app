@@ -52,7 +52,7 @@ const searchQuery = ref('')
 // Порядок сортировки
 const sortOrder = ref('asc')
 
-// Функция форматирования даты и времени в местное время
+// Функция форматирования даты и времени 
 const formatLocalDateTime = (isoDate) => {
   const options = { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' }
   return new Intl.DateTimeFormat('ru-RU', options).format(new Date(isoDate))

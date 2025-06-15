@@ -1,7 +1,7 @@
 <template>
   <div class="app">
     <header class="header">
-      <h1>PlanItUp</h1>
+      <h1>Планируй</h1>
       <p>Управляй событиями легко и эффективно!</p>
     </header>
 
@@ -12,11 +12,10 @@
         <!-- Календарь -->
         <div class="calendar">
           <div class="month-header">
-            <button @click="prevMonth" class="month-navigation prev-month">⬅️</button>
+            <button @click="prevMonth" class="month-navigation">⬅️</button>
             <h2>{{ monthNames[currentMonth] }} {{ currentYear }}</h2>
-            <button @click="nextMonth" class="month-navigation next-month">➡️</button>
+            <button @click="nextMonth" class="month-navigation">➡️</button>
           </div>
-
           <table>
             <thead>
               <tr>
@@ -25,8 +24,10 @@
             </thead>
             <tbody>
               <tr v-for="week in weeks" :key="week.weekNumber">
-                <td v-for="day in week.days" :key="day.date">
-                  <span :class="{ today: isToday(day.date) }">{{ day.dayNumber }}</span>
+                <td v-for="day in week.days" :key="day.date || day.dayNumber">
+                  <span :class="{ today: day.date && isToday(day.date) }">
+                    {{ day.dayNumber }}
+                  </span>
                 </td>
               </tr>
             </tbody>
@@ -37,10 +38,8 @@
         <form @submit.prevent="addEvent" :key="formKey">
           <label for="title-input">Название события:</label>
           <input type="text" id="title-input" v-model="currentEvent.title" placeholder="Название события" required />
-
           <label for="date-input">Дата и время:</label>
           <input type="datetime-local" id="date-input" v-model="currentEvent.date" required />
-
           <button type="submit">Добавить событие</button>
         </form>
 
@@ -54,26 +53,40 @@
           <button type="submit">Фильтровать</button>
         </form>
 
+        <!-- Кнопка импорта файла -->
+        <div class="import-section">
+          <h3>Импорт событий</h3>
+          <input 
+            type="file" 
+            @change="importEventsFromFile" 
+            accept=".json,.csv" 
+            class="file-input"
+          />
+          <p>Поддерживаются форматы: .json, .csv</p>
+        </div>
+
         <!-- Список событий -->
         <transition-group tag="ul" name="fade">
           <li v-for="event in filteredEvents" :key="event.id" class="event-item">
-            <span>{{ event.title }} — {{ formatLocalDateTime(event.date) }}</span>
-            <button @click="openEditModal(event)" class="edit-btn">Редактировать</button>
-            <button @click="deleteEvent(event.id)" class="delete-btn">Удалить</button>
+            <div class="event-content">
+              <span>{{ event.title }} — {{ formatLocalDateTime(event.date) }}</span>
+            </div>
+            <div class="buttons">
+              <button @click="openEditModal(event)" class="edit-btn">Редактировать</button>
+              <button @click="deleteEvent(event.id)" class="delete-btn">Удалить</button>
+            </div>
           </li>
         </transition-group>
 
-        <!-- MODAL WINDOW FOR EDITING EVENTS -->
+        <!-- Модальное окно редактирования -->
         <div v-if="showEditModal" class="modal">
           <div class="modal-content">
             <h3>Редактировать событие</h3>
             <form @submit.prevent="saveEditedEvent">
               <label for="edit-title">Название события:</label>
               <input type="text" id="edit-title" v-model="editedEvent.title" required />
-
               <label for="edit-date">Дата и время:</label>
               <input type="datetime-local" id="edit-date" v-model="editedEvent.date" required />
-
               <button type="submit">Сохранить изменения</button>
               <button @click="closeEditModal">Отмена</button>
             </form>
@@ -89,17 +102,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onBeforeMount } from 'vue'
+import { ref, computed, onBeforeMount } from 'vue'
 
 // Текущая дата
 const now = new Date()
 
-// Переменные для года и месяца
+// Год и месяц
 const currentYear = ref(now.getFullYear())
 const currentMonth = ref(now.getMonth())
 
 // Имена месяцев и дней недели
-const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+const monthNames = [
+  'Январь', 'Февраль', 'Март', 'Апрель',
+  'Май', 'Июнь', 'Июль', 'Август',
+  'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+]
 const weekDays = [
   { fullName: 'Понедельник', shortName: 'Пн' },
   { fullName: 'Вторник', shortName: 'Вт' },
@@ -107,69 +124,25 @@ const weekDays = [
   { fullName: 'Четверг', shortName: 'Чт' },
   { fullName: 'Пятница', shortName: 'Пт' },
   { fullName: 'Суббота', shortName: 'Сб' },
-  { fullName: 'Воскресенье', shortName: 'Вс' },
+  { fullName: 'Воскресенье', shortName: 'Вс' }
 ]
 
-// Массив событий
+// События
 const events = ref([])
-
-// Новый объект события
 const currentEvent = ref({ title: '', date: '' })
-
-// Переменные для Modal окна
-const showEditModal = ref(false)
 const editedEvent = ref({})
-
-// Режим редактирования
-const editMode = ref(false)
-
-// Поисковая фраза
+const showEditModal = ref(false)
 const searchQuery = ref('')
-
-// Порядок сортировки
 const sortOrder = ref('asc')
+const formKey = ref(0)
 
-// Генерация недель и дней
-const daysInMonth = (year: number, month: number) => {
-  const firstDay = new Date(year, month, 1)
-  const lastDay = new Date(year, month + 1, 0)
-  const totalDays = lastDay.getDate()
-  const weeks = []
-
-  for (let i = 0; i <= Math.ceil(totalDays / 7); i++) {
-    const week = { weekNumber: i + 1, days: [] }
-    for (let j = 0; j < 7; j++) {
-      const dayNumber = i * 7 + j + 1
-      if (dayNumber <= totalDays) {
-        const date = new Date(year, month, dayNumber)
-        week.days.push({ date, dayNumber })
-      }
-    }
-    weeks.push(week)
-  }
-
-  return weeks
-}
-
-// Недели и дни
-const weeks = computed(() => daysInMonth(currentYear.value, currentMonth.value))
-
-// Проверка, является ли день сегодняшним
-const isToday = (date: Date) => {
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  )
-}
-
-// Функция форматирования даты и времени в местное время
+// Форматирование даты
 const formatLocalDateTime = (isoDate) => {
   const options = { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' }
   return new Intl.DateTimeFormat('ru-RU', options).format(new Date(isoDate))
 }
 
-// Фильтрованные события
+// Отфильтрованные события
 const filteredEvents = computed(() => {
   let sortedEvents = [...events.value]
   if (sortOrder.value === 'desc') {
@@ -177,82 +150,63 @@ const filteredEvents = computed(() => {
   } else {
     sortedEvents.sort((a, b) => a.date.localeCompare(b.date))
   }
-
   return sortedEvents.filter(event =>
     event.title.toLowerCase().includes(searchQuery.value.toLowerCase())
   )
 })
 
-// Функция добавления события
+// Добавление события
 const addEvent = () => {
-  if (currentEvent.value.title.trim() === '') return alert('Введите название события!')
+  if (!currentEvent.value.title.trim()) return alert('Введите название события!')
 
-  // Проверяем, что дата валидная
   const validDate = new Date(currentEvent.value.date)
-  if (Number.isNaN(validDate.getTime())) {
-    return alert('Некорректная дата!')
-  }
+  if (Number.isNaN(validDate.getTime())) return alert('Некорректная дата!')
 
-  events.value.push({ id: Date.now(), title: currentEvent.value.title, date: validDate.toISOString() })
+  events.value.push({
+    id: Date.now(),
+    title: currentEvent.value.title,
+    date: validDate.toISOString()
+  })
+
   saveEvents()
   resetForm()
 }
 
-// Функция сброса формы
+// Сброс формы
 const resetForm = () => {
   currentEvent.value = { title: '', date: '' }
-  editMode.value = false
+  formKey.value++
 }
 
-// Открыть модальное окно для редактирования события
+// Редактирование события
 const openEditModal = (event) => {
-  editedEvent.value = { ...event } // Копируем текущее событие для редактирования
+  editedEvent.value = { ...event }
   showEditModal.value = true
 }
-
-// Закрыть модальное окно
 const closeEditModal = () => {
   showEditModal.value = false
 }
-
-// Сохранить изменения в событии
 const saveEditedEvent = () => {
   const index = events.value.findIndex(e => e.id === editedEvent.value.id)
   if (index >= 0) {
-    events.value.splice(index, 1, editedEvent.value)
+    events.value[index] = editedEvent.value
     saveEvents()
   }
   closeEditModal()
 }
 
-// Функция редактирования события
-const editEvent = (event) => {
-  currentEvent.value = { ...event }
-  editMode.value = true
-}
-
-// Функция сохранения изменений
-const editEventSubmit = () => {
-  const index = events.value.findIndex(e => e.id === currentEvent.value.id)
-  if (index >= 0) {
-    events.value[index] = currentEvent.value
-    saveEvents()
-    resetForm()
-  }
-}
-
-// Функция удаления события
+// Удаление события
 const deleteEvent = (id) => {
   events.value = events.value.filter(e => e.id !== id)
   saveEvents()
 }
 
-// Функция сохранения событий в localStorage
+// Сохранение в localStorage
 const saveEvents = () => {
   localStorage.setItem('events', JSON.stringify(events.value))
 }
 
-// Смена месяцев в календаре
+// Навигация по месяцам
 const prevMonth = () => {
   if (currentMonth.value === 0) {
     currentYear.value -= 1
@@ -261,7 +215,6 @@ const prevMonth = () => {
     currentMonth.value -= 1
   }
 }
-
 const nextMonth = () => {
   if (currentMonth.value === 11) {
     currentYear.value += 1
@@ -271,35 +224,123 @@ const nextMonth = () => {
   }
 }
 
-// Получаем разрешение на уведомления
+// Генерация календаря
+const daysInMonth = (year: number, month: number) => {
+  const firstDay = new Date(year, month, 1)
+  const lastDay = new Date(year, month + 1, 0)
+  const totalDays = lastDay.getDate()
+  const startDay = firstDay.getDay()
+  const adjustedStart = startDay === 0 ? 7 : startDay
+
+  const weeks = []
+  let dayCounter = 1
+
+  for (let i = 0; i < Math.ceil((adjustedStart + totalDays) / 7); i++) {
+    const week = { weekNumber: i + 1, days: [] }
+    for (let j = 0; j < 7; j++) {
+      if (i === 0 && j < adjustedStart - 1) {
+        week.days.push({ dayNumber: null })
+      } else if (dayCounter <= totalDays) {
+        const date = new Date(year, month, dayCounter++)
+        week.days.push({ date, dayNumber: date.getDate() })
+      } else {
+        week.days.push({ dayNumber: null })
+      }
+    }
+    weeks.push(week)
+  }
+
+  return weeks
+}
+
+// Вычисляем недели
+const weeks = computed(() => daysInMonth(currentYear.value, currentMonth.value))
+
+// Проверка, является ли день сегодняшним
+const isToday = (date: Date) => {
+  if (!date) return false
+  const eventDate = new Date(date)
+  return (
+    eventDate.getFullYear() === now.getFullYear() &&
+    eventDate.getMonth() === now.getMonth() &&
+    eventDate.getDate() === now.getDate()
+  )
+}
+
+// Импорт событий из файла
+const importEventsFromFile = (event) => {
+  const file = event.target.files[0]
+  if (!file) return alert('Файл не выбран!')
+
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+    let data = []
+
+    // Если CSV
+    if (file.name.endsWith('.csv')) {
+      const lines = e.target.result.split('\n').slice(1)
+      data = lines.map(line => {
+        const [title, date] = line.trim().split(',')
+        return {
+          id: Date.now() + Math.random(),
+          title,
+          date,
+          notified: false
+        }
+      })
+
+    // Если JSON
+    } else if (file.name.endsWith('.json')) {
+      try {
+        data = JSON.parse(e.target.result).map(event => ({
+          ...event,
+          id: event.id || Date.now() + Math.random()
+        }))
+      } catch (err) {
+        console.error('Ошибка парсинга JSON:', err)
+        alert('Некорректный формат JSON')
+      }
+
+    // Неизвестный формат
+    } else {
+      return alert('Неподдерживаемый формат файла. Используйте .json или .csv')
+    }
+
+    events.value = [...data, ...events.value]
+    saveEvents()
+    alert(`Загружено ${data.length} событий`)
+  }
+
+  reader.onerror = () => {
+    alert('Ошибка чтения файла')
+  }
+
+  reader.readAsText(file)
+}
+
+// Уведомления за 10 минут до события
 const requestNotificationPermission = async () => {
   try {
     await Notification.requestPermission()
     console.log('Разрешение на уведомления получено.')
   } catch (err) {
-    console.error('Ошибка при запросе разрешения:', err)
+    console.error('Ошибка при запросе разрешения:', err.message)
   }
 }
 
-// Отправляем уведомление
 const showNotification = (title, body) => {
   if ('Notification' in window && Notification.permission === 'granted') {
     new Notification(title, { body })
   }
 }
 
-// Проверка и отправка уведомлений каждые 5 секунд
-setInterval(() => {
-  checkNotifications()
-}, 5000)
-
-// Проверка ближайших событий и отправка уведомлений
 const checkNotifications = () => {
   const now = new Date()
   const upcomingEvents = events.value.filter(event => {
     if (!event || !event.date) return false
     const eventDate = new Date(event.date)
-    return eventDate > now && eventDate < new Date(now.getTime() + 10 * 60 * 1000) // ближайшие 10 минут
+    return eventDate > now && eventDate < new Date(now.getTime() + 10 * 60 * 1000)
   })
 
   upcomingEvents.forEach(event => {
@@ -309,11 +350,13 @@ const checkNotifications = () => {
   })
 }
 
-// Вызываем запрос разрешения при монтировании компонента
+// Проверка каждые 5 секунд
+setInterval(checkNotifications, 5000)
+
+// При монтировании компонента
 onBeforeMount(async () => {
   await requestNotificationPermission()
 
-  // Загрузка событий из localStorage
   const storedEvents = localStorage.getItem('events')
   if (storedEvents) {
     events.value = JSON.parse(storedEvents)
@@ -330,17 +373,17 @@ onBeforeMount(async () => {
   padding: 20px;
   background-color: #f0f5fa;
   color: #333;
-  max-width: 1000px; /* Максимальная ширина страницы */
-  margin: 0 auto; /* Центрирование */
-  overflow-x: hidden; /* Скрываем горизонтальный скроллинг */
+  max-width: 1000px;
+  margin: 0 auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .content-wrapper {
-  max-width: 800px; /* Максимально допустимая ширина контента */
-  margin: 0 auto; /* Центрирование */
+  max-width: 800px;
+  margin: 0 auto;
   padding: 20px;
-  box-sizing: border-box; /* Внутренние отступы учитываются в расчёте ширины */
-  overflow-wrap: break-word; /* Принудительно разорвать текст */
+  box-sizing: border-box;
 }
 
 .header {
@@ -349,33 +392,17 @@ onBeforeMount(async () => {
   text-align: center;
   padding: 20px;
   border-radius: 10px;
-}
-
-.content {
-  flex-grow: 1;
-  text-align: center;
-  padding: 20px;
-}
-
-.content ul {
-  list-style-position: inside;
-  padding-left: 0;
-}
-
-.footer {
-  background-color: #eaeaea;
-  padding: 10px;
-  text-align: center;
-  font-size: 0.8em;
+  margin-bottom: 20px;
 }
 
 .calendar table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0 auto;
+  margin-bottom: 20px;
 }
 
-.calendar th, .calendar td {
+.calendar th,
+.calendar td {
   padding: 10px;
   text-align: center;
 }
@@ -383,6 +410,7 @@ onBeforeMount(async () => {
 .today {
   background-color: yellow;
   font-weight: bold;
+  color: black;
 }
 
 .month-header {
@@ -393,30 +421,16 @@ onBeforeMount(async () => {
 }
 
 .month-navigation {
-  font-size: 1.5rem; /* Увеличим размер шрифта */
+  font-size: 1.5rem;
   background-color: transparent;
   border: none;
-  color: #007bff; /* Яркий голубой цвет */
+  color: #007bff;
   cursor: pointer;
-  user-select: none;
   transition: color 0.3s ease;
 }
 
 .month-navigation:hover {
-  color: #0056b3; /* Меняем цвет при наведении */
-}
-
-.month-navigation.prev-month {
-  margin-right: 10px; /* Немного увеличим расстояние между кнопками */
-}
-
-.month-navigation.next-month {
-  margin-left: 10px; /* То же самое */
-}
-
-.calendar h2 {
-  font-size: 1.5rem; /* Размер шрифта названия месяца */
-  margin: 0;
+  color: #0056b3;
 }
 
 .fade-move,
@@ -441,27 +455,32 @@ onBeforeMount(async () => {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  margin-bottom: 10px;
+  margin: 10px 0;
   padding: 10px;
   background-color: #ebf1f9;
   border-radius: 5px;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   color: #333;
-  max-width: 100%; /* Ограничиваем ширину элемента */
-  overflow-wrap: break-word; /* Поведение при длинных словах */
-  word-break: break-all; /* Жёсткий перенос текста */
-  width: 100%; /* Фиксированная ширина */
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.event-item span {
-  word-break: break-all; /* Дополнительно разрываем длинные слова */
+.event-content {
   margin-bottom: 10px;
+  text-align: center;
 }
 
-.event-item button {
-  display: inline-flex;
-  margin: 2px;
-  padding: 5px 10px;
+.buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+.edit-btn,
+.delete-btn {
+  flex: 1;
+  padding: 10px 20px;
   background-color: #007bff;
   color: white;
   border: none;
@@ -470,7 +489,8 @@ onBeforeMount(async () => {
   transition: background-color 0.3s ease;
 }
 
-.event-item button:hover {
+.edit-btn:hover,
+.delete-btn:hover {
   background-color: #0056b3;
 }
 
@@ -478,6 +498,8 @@ form {
   display: grid;
   gap: 10px;
   margin-bottom: 20px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 form label {
@@ -509,6 +531,43 @@ form button:hover {
   background-color: #0056b3;
 }
 
+/* Стили для кнопки импорта файла */
+.import-section {
+  margin-top: 20px;
+  text-align: center;
+  width: 100%;
+}
+
+.file-input {
+  padding: 10px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 100%;
+  font-size: 1rem;
+  transition: background-color 0.3s ease;
+}
+
+.file-input:hover {
+  background-color: #0056b3;
+}
+
+.file-input::file-selector-button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 10px 15px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.file-input::file-selector-button:hover {
+  background-color: #0056b3;
+}
+
 /* MODAL STYLE */
 .modal {
   position: fixed;
@@ -516,11 +575,12 @@ form button:hover {
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.5); /* Полупрозрачный фон */
+  background-color: rgba(0, 0, 0, 0.5);
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000; /* Самый верхний слой */
+  z-index: 1000;
+  box-sizing: border-box;
 }
 
 .modal-content {
@@ -528,9 +588,10 @@ form button:hover {
   padding: 20px;
   border-radius: 10px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  width: 300px; /* Явно указываем ширину модального окна */
-  max-width: 100%; /* Дополнительное ограничение ширины */
+  width: 300px;
+  max-width: 100%;
   text-align: center;
+  box-sizing: border-box;
 }
 
 .modal-content form {
